@@ -1,58 +1,27 @@
-use datafusion::arrow::array::{Array, AsArray, ListArray, StringArray};
-use datafusion::functions_aggregate::array_agg::array_agg;
-use datafusion::functions_aggregate::string_agg::{StringAgg};
-use datafusion::sql::sqlparser::ast::Array;
-use datafusion::{prelude::*, sql::parser::DFParser};
-use datafusion::arrow::util::pretty::print_batches; // For nice formatting
+use std::fs::File;
+use std::io::{self, BufRead};
 
-use tokio;
-
-#[tokio::main]
-async fn main() -> datafusion::error::Result<()> {
+use datafusion::common::HashMap;
+fn main(){
     println!("Running AA changes.");
     let amino_acid_static_dataset = "aa.tsv";
-    let ctx = SessionContext::new();
-    let mut options = CsvReadOptions::new();
-    options = options.delimiter(b'\t');
-    options = options.file_extension("tsv");
-    let result = ctx.read_csv(amino_acid_static_dataset, options);
+    let file = File::open(amino_acid_static_dataset).unwrap();
+    let reader = io::BufReader::new(file);
 
-    let df = match result.await {
-        Ok(df) => df,
-        Err(msg) => panic!("{msg}")
-    };
+    let mut lines = reader.lines();
+    let alphabet: &mut AminoAcidAlphabet = &mut AminoAcidAlphabet::new();
+    while let Some(Ok(line)) = lines.next() {
+        let split: Vec<String> = line.split_whitespace().map(String::from).collect();
+        let amino_acid = AminoAcid::from_row(split.as_slice());
+        alphabet.add(amino_acid);
+    }
 
-    let aggregations = df.aggregate(
-        vec![col("aminoacid"), col("letter"), col("fullname")], 
-        vec![(array_agg(col("codon"))).alias("codons")]
-    )?.collect().await?;
-
-    print_batches(&aggregations);
-    for batch in aggregations {
-        let short_names = batch.column_by_name("aminoacid").unwrap().as_any().downcast_ref::<StringArray>().expect("Failed to cast to StringArray");
-        let full_names = batch.column_by_name("fullname").unwrap().as_any().downcast_ref::<StringArray>().expect("Failed to cast to StringArray");
-        let letters = batch.column_by_name("letter").unwrap().as_any().downcast_ref::<StringArray>().expect("Failed to cast to StringArray");
-        let codons = batch.column_by_name("codons").unwrap().as_any().downcast_ref::<ListArray>().expect("Failed");
-     
-
-        for i in 0..batch.num_rows() {
-            let short_name = short_names.value(i);
-            let full_name = full_names.value(i);
-            let letter = letters.value(i);
-            let codon_set = codons.value(i).as_any().downcast_ref::<StringArray>().expect("Failed").iter().map();
-            // let codon_set_len = codon_set.len().to_owned();
-            // for j in 0..codon_set.len() {
-            //     let codon = codons.value(j);
-            // }
-        }
-
-    }    
-
-    Ok(())
+    let a1 = 'G';
+    let a2 = 'V';
+    println!("{:?}", alphabet.find_combination(a1, a2))
 }
 
-
-
+#[derive(Debug, Hash, PartialEq, Eq)]
 struct AminoAcid {
     letter: char,
     codon: [char; 3],
@@ -60,7 +29,41 @@ struct AminoAcid {
     short_name: String,
 }
 
+impl AminoAcid  {
+    fn from_row(row: &[String]) -> Self{
+        AminoAcid {
+            codon: row[0].chars().collect::<Vec<_>>().try_into().expect("Wrong size"),
+            short_name: row[1].to_owned(),
+            letter: row[2].chars().next().expect("No char"),
+            full_name: row[3].to_owned(),
+        }
+    }
+    
+}
 
+#[derive(Debug)]
 struct AminoAcidAlphabet {
-    amino_acids: Vec<AminoAcid>,
+    amino_acids: HashMap<char, Vec<[char; 3]>>,
+}
+
+
+impl AminoAcidAlphabet {
+    fn new() -> Self {
+        AminoAcidAlphabet {
+            amino_acids: HashMap::new()
+        }
+    }
+    fn add(&mut self, amino_acid: AminoAcid) {
+        let check = self.amino_acids.get_mut(&amino_acid.letter);
+        match check {
+            Some(codons) => {codons.push(amino_acid.codon); },
+            None =>{ self.amino_acids.insert(amino_acid.letter,  vec![amino_acid.codon]); },
+        }
+    }
+
+    fn find_combination(&self, a1: char, a2: char) -> (&Vec<[char;3]>, &Vec<[char;3]>){
+        let aa1 = self.amino_acids.get(&a1).unwrap();
+        let aa2 = self.amino_acids.get(&a2).unwrap();
+        (aa1, aa2)
+    } 
 }
