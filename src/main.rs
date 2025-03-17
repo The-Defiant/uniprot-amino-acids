@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::io::{self, BufRead};
-
-use datafusion::common::HashMap;
+use std::collections::HashMap;
+use clap::Parser;
 fn main(){
     println!("Running AA changes.");
     let amino_acid_static_dataset = "aa.tsv";
